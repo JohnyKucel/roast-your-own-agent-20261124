@@ -61,15 +61,47 @@ def total(candidate):
 
 
 def validate_entry(line):
-    """Gate check mirroring the sealed scorer: UTF-8, 1-200 chars, one line."""
+    """Gate check mirroring the sealed scorer: UTF-8, 1-200 chars, one line.
+
+    Raises ValueError with a plain message on any failure; the caller
+    turns that into exit 1 with the message on stderr.
+    """
     if not line or not line.strip():
         raise ValueError("entry is empty or only whitespace")
     if "\n" in line or "\r" in line:
         raise ValueError("entry must be a single line")
-    if len(line) > LIMIT:
-        raise ValueError(f"entry is {len(line)} chars, over the {LIMIT} limit")
-    line.encode("utf-8")
+    if len(line) < 1 or len(line) > LIMIT:
+        raise ValueError(f"entry is {len(line)} chars, outside the 1-{LIMIT} range")
+    try:
+        line.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ValueError(f"entry is not valid UTF-8: {exc}") from exc
     return line
+
+
+def checked_entry(text):
+    """Validate one entry line; on failure print to stderr and exit 1."""
+    try:
+        return validate_entry(text)
+    except ValueError as exc:
+        print(f"error: invalid entry: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+
+def resolve_output_dir():
+    """Output dir from $MAKEFUN_OUTPUT_DIR, default /output; create if needed.
+
+    A blank env value counts as unset. A directory that cannot be
+    created is a hard failure: message on stderr, exit 1.
+    """
+    raw = os.environ.get("MAKEFUN_OUTPUT_DIR", "")
+    out_dir = raw.strip() or "/output"
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+    except OSError as exc:
+        print(f"error: cannot create output dir {out_dir!r}: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    return out_dir
 
 
 def rank():
@@ -86,9 +118,8 @@ def main():
     for points, _neg, candidate, parts in ranked:
         print(f"{points:2d} chars={len(candidate['text']):3d} {parts} :: {candidate['text']}")
     best_points, _neg, best, _parts = ranked[0]
-    line = validate_entry(best["text"])
-    out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
-    os.makedirs(out_dir, exist_ok=True)
+    line = checked_entry(best["text"])
+    out_dir = resolve_output_dir()
     target = os.path.join(out_dir, "entry.txt")
     with open(target, "w", encoding="utf-8", newline="") as handle:
         handle.write(line + "\n")
